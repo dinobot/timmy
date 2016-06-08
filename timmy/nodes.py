@@ -27,8 +27,9 @@ import sys
 import re
 from datetime import datetime
 import tools
-from tools import w_list, run_with_lock
+from tools import auth_token, w_list, run_with_lock
 from copy import deepcopy
+import urllib2
 
 
 class Node(object):
@@ -74,6 +75,7 @@ class Node(object):
         self.outputs_timestamp = False
         self.outputs_timestamp_dir = None
         self.apply_conf(conf)
+        self.conf = conf
         self.logger = logger or logging.getLogger(__name__)
 
     def __str__(self):
@@ -146,24 +148,31 @@ class Node(object):
         r_apply(conf, p, p_s, c_a, k_d, overridden, d, clean=clean)
 
     def get_release(self):
-        if self.id == 0:
-            cmd = ("awk -F ':' '/release/ {print $2}' "
-                   "/etc/nailgun/version.yaml")
+        token = auth_token(self.conf)
+        if not self.cluster:
+            req = urllib2.Request("http://" + self.conf['fuel_ip'] + ":"
+                                  + self.conf['nailgun_port'] + "/api/version",
+                                  None, {'X-Auth-Token': token})
         else:
-            cmd = ("awk -F ':' '/fuel_version/ {print $2}' "
-                   "/etc/astute.yaml")
-        release, err, code = tools.ssh_node(ip=self.ip,
-                                            command=cmd,
-                                            ssh_opts=self.ssh_opts,
-                                            timeout=self.timeout,
-                                            prefix=self.prefix)
-        if code != 0:
+            req = urllib2.Request("http://" + self.conf['fuel_ip'] + ":"
+                                  + self.conf['nailgun_port']
+                                  + "/api/clusters",
+                                  None, {'X-Auth-Token': token})
+
+        if urllib2.urlopen(req).getcode() != 200:
             self.logger.warning('node: %s: could not determine'
                                 ' MOS release' % self.id)
-        else:
-            self.release = release.strip('\n "\'')
-        self.logger.info('node: %s, MOS release: %s' %
-                         (self.id, self.release))
+
+        data = urllib2.urlopen(req).read()
+
+        if not self.cluster:
+            release = json.loads(data).get('release')
+            self.release = release
+
+        for key in json.loads(data):
+            if self.cluster and key.get('id') == self.cluster:
+                release = key.get('fuel_version')
+                self.release = release
         return release
 
     def exec_cmd(self, fake=False, ok_codes=None):
@@ -475,19 +484,16 @@ class NodeManager(object):
         self.nodes[self.conf['fuel_ip']] = fuelnode
 
     def get_nodes_json(self):
-        fuelnode = self.nodes[self.conf['fuel_ip']]
-        fuel_node_cmd = ('fuel node list --json --user %s --password %s' %
-                         (self.conf['fuel_user'],
-                          self.conf['fuel_pass']))
-        nodes_json, err, code = tools.ssh_node(ip=fuelnode.ip,
-                                               command=fuel_node_cmd,
-                                               ssh_opts=fuelnode.ssh_opts,
-                                               timeout=fuelnode.timeout,
-                                               prefix=fuelnode.prefix)
-        if code != 0:
-            self.logger.critical(('NodeManager: cannot get '
-                                  'fuel node list: %s') % err)
+        token = auth_token(self.conf)
+        req = urllib2.Request("http://" + self.conf['fuel_ip']
+                              + ":" + self.conf['nailgun_port'] + "/api/nodes",
+                              None, {'X-Auth-Token': token})
+        if urllib2.urlopen(req).getcode() != 200:
+            logging.error('NodeManager get_nodes: cannot get '
+                          'fuel node list ')
             sys.exit(4)
+        else:
+            nodes_json = urllib2.urlopen(req).read()
         return nodes_json
 
     def nodes_init(self):
@@ -511,14 +517,14 @@ class NodeManager(object):
                 self.nodes[node.ip] = node
 
     def nodes_get_release(self):
-        run_items = []
+        known_clusters = {}
         for key, node in self.nodes.items():
-            if not node.filtered_out:
-                run_items.append(tools.RunItem(target=node.get_release,
-                                               key=key))
-        result = tools.run_batch(run_items, 100, dict_result=True)
-        for key in result:
-            self.nodes[key].release = result[key]
+            if not node.filtered_out and not node.release:
+                if node.cluster not in known_clusters:
+                    self.nodes[key].release = node.get_release()
+                    known_clusters[node.cluster] = node.release
+                else:
+                    self.nodes[key].release = known_clusters.get(node.cluster)
 
     def conf_assign_once(self):
         once = Node.conf_once_prefix

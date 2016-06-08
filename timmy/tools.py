@@ -30,7 +30,7 @@ import json
 from flock import FLock
 from tempfile import gettempdir
 from pipes import quote
-
+import urllib2
 
 logger = logging.getLogger(__name__)
 slowpipe = '''
@@ -44,6 +44,32 @@ while 1:
     else:
         break
 '''
+
+
+def auth_token(conf):
+    req_data = json.dumps(
+        {'auth':
+            {'scope':
+                {'project':
+                    {'domain': {'id': 'default'},
+                     'name': conf['tenant']}},
+                     'identity':
+             {'password':
+                 {'user':
+                     {'domain': {'id': 'default'},
+                      'password': conf['fuel_pass'],
+                      'name': conf['fuel_user']}},
+                      'methods': ['password']}
+             }
+         }
+    )
+
+    req = urllib2.Request("http://" + conf['fuel_ip'] + ":"
+                          + conf['keystone_port'] + "/v3/auth/tokens",
+                          req_data, {'Content-Type': 'application/json'})
+
+    token = urllib2.urlopen(req).info().getheader('X-Subject-Token')
+    return token
 
 
 def interrupt_wrapper(f):

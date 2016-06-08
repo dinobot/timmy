@@ -13,6 +13,9 @@ def load_conf(filename):
                         '-lroot', '-oBatchMode=yes']
     conf['env_vars'] = ['OPENRC=/root/openrc', 'IPTABLES_STR="iptables -nvL"']
     conf['fuel_ip'] = '127.0.0.1'
+    conf['tenant'] = 'admin'
+    conf['nailgun_port'] = '8000'
+    conf['keystone_port'] = '5000'
     conf['fuel_user'] = 'admin'
     conf['fuel_pass'] = 'admin'
     conf['timeout'] = 15
