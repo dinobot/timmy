@@ -67,8 +67,10 @@ def auth_token(conf):
     req = urllib2.Request("http://" + conf['fuel_ip'] + ":"
                           + conf['keystone_port'] + "/v3/auth/tokens",
                           req_data, {'Content-Type': 'application/json'})
-
-    token = urllib2.urlopen(req).info().getheader('X-Subject-Token')
+    try:
+        token = urllib2.urlopen(req).info().getheader('X-Subject-Token')
+    except:
+        token = None
     return token
 
 
